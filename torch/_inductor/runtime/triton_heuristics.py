@@ -1,6 +1,5 @@
 # mypy: allow-untyped-defs
 from __future__ import annotations
-
 import builtins
 import copy
 import functools
@@ -554,16 +553,7 @@ class CachingAutotuner(KernelInterface):
         # for some (complicated) custom Triton kernels, a register-spilling
         # config may yield the best latency.
         if not self.custom_kernel and launcher.n_spills > self.inductor_meta.get(
-            "spill_threshold", 16
-        ):
-            log.debug(
-                "Skip config %s because of register spilling: %d",
-                launcher.config,
-                launcher.n_spills,
-            )
-            return float("inf")
-
-        device_interface = self.get_device_interface()
+   device_interface = self.get_device_interface()
         stream = device_interface.get_raw_stream(device_interface.current_device())
 
         cpu_copies = self.copy_args_to_cpu_if_needed(*args, **kwargs)
@@ -575,6 +565,17 @@ class CachingAutotuner(KernelInterface):
             # reset to zero before evaluating any config
             self.reset_to_zero_args(*args, **kwargs)
             args_with_constexprs = self._get_args_with_constexprs(cloned_args, launcher)
+
+            # Check if argument count matches what the kernel expects
+            expected_num_args = launcher.__code__.co_argcount - len(cloned_kwargs) - 2  # Subtract `grid` and `stream`
+            if len(args_with_constexprs) != expected_num_args:
+                raise ValueError(
+                    f"Incorrect number of arguments for launcher. "
+                    f"Expected {expected_num_args}, but got {len(args_with_constexprs)}. "
+                    "This may be due to args_with_constexprs overwriting grid."
+        )
+
+            
             launcher(
                 *args_with_constexprs,
                 **cloned_kwargs,
@@ -590,6 +591,8 @@ class CachingAutotuner(KernelInterface):
 
         if self.device_props.type == "cpu":
             return benchmarker.benchmark_cpu(kernel_call)
+
+        return benchmarker.benchmark_gpu(kernel_call, rep=40)
 
         return benchmarker.benchmark_gpu(kernel_call, rep=40)
 
